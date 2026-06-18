@@ -18,6 +18,11 @@ class StreamPublisher:
             '-level', '3.0',
             '-preset', 'ultrafast',
             '-tune', 'zerolatency',
+            '-bf', '0',              
+            '-g', str(fps),          
+            '-sc_threshold', '0',    
+            '-fflags', 'nobuffer',   
+            '-flags', 'low_delay',    
             '-f', 'rtsp',
             '-rtsp_transport', 'tcp', self.publish_url
         ]
