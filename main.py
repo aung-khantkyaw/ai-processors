@@ -1,12 +1,18 @@
 import time
+import cv2
 from models import AILoader
 from processors import HumanDetector
 from streams import StreamReceiver, StreamPublisher
 
+MOTION_THRESHOLD = 1500 
+POST_RECORD_SECONDS = 5.0 
+
+def trigger_recording(cam_name, action):
+    print(f"[{cam_name}] {action.upper()} RECORDING...")
+    pass
 
 def main():
     model, device, tag = AILoader.initialize()
-
     human_detector = HumanDetector(model, device, tag)
 
     receiver = StreamReceiver()
@@ -17,10 +23,12 @@ def main():
         return
 
     receiver.start_threads()
-
     publishers = {}
 
-    print("\n[System] Headless AI Detection Started. Press 'Ctrl+C' in terminal to quit.")
+    ai_states = {}
+    bg_subtractors = {}
+
+    print("\n[System] Smart Event-Based AI Detection Started...")
 
     try:
         while True:
@@ -36,7 +44,39 @@ def main():
                         frame_processed = True
                     
                     if frame is not None:
-                        processed_frame = human_detector.process(frame, cam_name)
+                        if cam_name not in ai_states:
+                            ai_states[cam_name] = {"is_active": False, "last_human_time": 0}
+                            bg_subtractors[cam_name] = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=50, detectShadows=False)
+
+                        state = ai_states[cam_name]
+                        
+                        if not state["is_active"]:
+                            fg_mask = bg_subtractors[cam_name].apply(frame)
+                            motion_score = cv2.countNonZero(fg_mask)
+
+                            if motion_score > MOTION_THRESHOLD:
+                                print(f"[{cam_name}] Motion Detected! Waking up AI...")
+                                state["is_active"] = True
+                                state["last_human_time"] = time.time()
+                                trigger_recording(cam_name, "start")
+                                processed_frame = human_detector.process(frame, cam_name)
+                            else:
+                                processed_frame = frame.copy()
+
+                        else:
+                            processed_frame = human_detector.process(frame, cam_name)
+                            
+                            current_boxes = human_detector.last_known_data.get(cam_name, [])
+
+                            if len(current_boxes) > 0:
+                                state["last_human_time"] = time.time()
+                            else:
+                                time_since_last_seen = time.time() - state["last_human_time"]
+                                
+                                if time_since_last_seen > POST_RECORD_SECONDS:
+                                    print(f"[{cam_name}] Object cleared for 5s. Sleeping AI...")
+                                    state["is_active"] = False
+                                    trigger_recording(cam_name, "stop")
 
                         if cam_name not in publishers:
                             h, w, _ = processed_frame.shape
@@ -50,14 +90,11 @@ def main():
 
     except KeyboardInterrupt:
         print("\n[System] Stopping gracefully...")
-
     finally:
         receiver.stop()
         for pub in publishers.values():
             pub.stop()
-        # cv2.destroyAllWindows()
         print("[System] Clean exit.")
-
 
 if __name__ == "__main__":
     main()
